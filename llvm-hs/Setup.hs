@@ -9,6 +9,11 @@ import Distribution.PackageDescription hiding (buildInfo, includeDirs)
 import Distribution.Simple
 import Distribution.Simple.LocalBuildInfo
 import Distribution.Simple.PreProcess
+#if MIN_VERSION_Cabal(3,8,1)
+import qualified Distribution.Utils.Path as Path
+import Data.Coerce          (coerce)
+import Data.String          (fromString)
+#endif
 import Distribution.Simple.Program
 import Distribution.Simple.Setup hiding (Flag)
 import Distribution.System
@@ -134,8 +139,15 @@ main = do
                          (drop (length stdlibPrefix))
                          (find (isPrefixOf stdlibPrefix) llvmCxxFlags)
             where stdlibPrefix = "-stdlib=lib"
-      includeDirs <- liftM lines $ llvmConfig ["--includedir"]
-      libDirs <- liftM lines $ llvmConfig ["--libdir"]
+      includeDirsRaw <- liftM lines $ llvmConfig ["--includedir"]
+      libDirsRaw     <- liftM lines $ llvmConfig ["--libdir"]
+#if MIN_VERSION_Cabal(3,8,1)
+      let includeDirs = map Path.unsafeMakeSymbolicPath includeDirsRaw
+          libDirs     = map Path.unsafeMakeSymbolicPath libDirsRaw
+#else
+      let includeDirs = includeDirsRaw
+          libDirs     = libDirsRaw
+#endif
       [llvmVersion] <- liftM lines $ llvmConfig ["--version"]
       let getLibs = liftM (map (fromJust . stripPrefix "-l") . words) . llvmConfig
       libs_static   <- getLibs ["--libs", "--system-libs", "--link-static"]
@@ -156,8 +168,9 @@ main = do
               }
            }
           configFlags' = confFlags {
-            configExtraLibDirs = libDirs ++ configExtraLibDirs confFlags,
+            configExtraLibDirs    = libDirs     ++ configExtraLibDirs confFlags,
             configExtraIncludeDirs = includeDirs ++ configExtraIncludeDirs confFlags
+
            }
       addLLVMToLdLibraryPath configFlags'
       confHook simpleUserHooks (genericPackageDescription', hookedBuildInfo) configFlags',
@@ -183,16 +196,23 @@ main = do
                       runPreProcessor (origHsc buildInfo') inFiles outFiles verbosity
               }
               where origHsc buildInfo' =
-                      fromMaybe
-                        ppHsc2hs
+#if MIN_VERSION_Cabal(3,8,1)
+                      fromMaybe ppHsc2hs
+                        (lookup (fromString "hsc") origHookedPreprocessors)
+#else
+                      fromMaybe ppHsc2hs
                         (lookup "hsc" origHookedPreprocessors)
+#endif
                         buildInfo'
                         localBuildInfo
 #ifdef MIN_VERSION_Cabal_2_0_0
                         componentLocalBuildInfo
 #endif
+#if MIN_VERSION_Cabal(3,8,1)
+      in [(fromString "hsc" :: Suffix, newHsc)] ++ origHookedPreprocessors,
+#else
       in [("hsc", newHsc)] ++ origHookedPreprocessors,
-
+#endif
     buildHook = \packageDesc localBuildInfo userHooks buildFlags ->
       do addLLVMToLdLibraryPath (configFlags localBuildInfo)
          buildHook origUserHooks packageDesc localBuildInfo userHooks buildFlags,
